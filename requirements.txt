@@ -1,0 +1,6 @@
+pipecat-ai[google,azure,openai,silero,webrtc]
+pipecat_ai_small_webrtc_prebuilt
+uvicorn
+fastapi
+python-dotenv
+loguru
