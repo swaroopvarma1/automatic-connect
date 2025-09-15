@@ -18,6 +18,7 @@ from fastapi import BackgroundTasks, FastAPI
 from loguru import logger
 
 from pipecat.pipeline.pipeline import Pipeline
+from pipecat.audio.vad.vad_analyzer import VADParams
 from pipecat.pipeline.runner import PipelineRunner
 from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContext
@@ -34,6 +35,10 @@ from pipecat.processors.transcript_processor import TranscriptProcessor
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
 from pipecat.frames.frames import Frame, LLMTextFrame
 from pipecat.processors.frame_processor import FrameProcessor
+from pipecat.adapters.schemas.tools_schema import ToolsSchema
+
+
+from tools import tool_functions, tools
 
 # Load environment variables from .env file
 load_dotenv(override=True)
@@ -50,6 +55,7 @@ GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS_JSON", "{}")
 #
 
 def smallwebrtc_sdp_cleanup_ice_candidates(text: str, pattern: str) -> str:
+    """Original aggressive ICE filtering for local networks"""
     result = []
     lines = text.splitlines()
     for line in lines:
@@ -59,6 +65,36 @@ def smallwebrtc_sdp_cleanup_ice_candidates(text: str, pattern: str) -> str:
         else:
             result.append(line)
     return "\r\n".join(result)
+
+
+def smallwebrtc_sdp_cleanup_ice_candidates_production(text: str, pattern: str) -> str:
+    """Less aggressive ICE filtering for production environments"""
+    result = []
+    lines = text.splitlines()
+    for line in lines:
+        if re.search("a=candidate", line):
+            # Keep host candidates AND server reflexive candidates for NAT traversal
+            if (re.search("typ host", line) or
+                re.search("typ srflx", line) or
+                re.search(pattern, line)):
+                result.append(line)
+            # Remove relay candidates only (ESP32 can't handle them)
+            elif not re.search("typ relay", line):
+                result.append(line)
+        else:
+            result.append(line)
+    return "\r\n".join(result)
+
+
+def is_production_environment(host: str) -> bool:
+    """Detect if running in production based on host IP"""
+    # GCP external IPs are typically not in private ranges
+    private_ranges = [
+        "192.168.", "10.", "172.16.", "172.17.", "172.18.", "172.19.",
+        "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
+        "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."
+    ]
+    return not any(host.startswith(range_) for range_ in private_ranges)
 
 
 def smallwebrtc_sdp_cleanup_fingerprints(text: str) -> str:
@@ -71,8 +107,30 @@ def smallwebrtc_sdp_cleanup_fingerprints(text: str) -> str:
 
 
 def smallwebrtc_sdp_munging(sdp: str, host: str) -> str:
+    """Apply ESP32-specific SDP modifications with production awareness"""
+    logger.info(f"Starting SDP munging for host: {host}")
+    logger.debug(f"Original SDP length: {len(sdp)} characters")
+    
+    # Always clean fingerprints (ESP32 limitation)
     sdp = smallwebrtc_sdp_cleanup_fingerprints(sdp)
-    sdp = smallwebrtc_sdp_cleanup_ice_candidates(sdp, host)
+    logger.debug(f"After fingerprint cleanup: {len(sdp)} characters")
+    
+    # Apply different ICE filtering for production vs local
+    if is_production_environment(host):
+        logger.info("Using production ICE candidate filtering")
+        sdp = smallwebrtc_sdp_cleanup_ice_candidates_production(sdp, host)
+    else:
+        logger.info("Using local network ICE candidate filtering")
+        sdp = smallwebrtc_sdp_cleanup_ice_candidates(sdp, host)
+    
+    logger.debug(f"After ICE cleanup: {len(sdp)} characters")
+    
+    # Log ICE candidates for debugging
+    ice_candidates = [line for line in sdp.split('\n') if 'a=candidate' in line]
+    logger.info(f"Remaining ICE candidates: {len(ice_candidates)}")
+    for candidate in ice_candidates:
+        logger.debug(f"ICE: {candidate}")
+    
     return sdp
 
 #
@@ -161,7 +219,7 @@ SYSTEM_PROMPT = """
 
     IDENTITY
     If asked about identity, say:
-    “I'm your AI sidekick. Think of me as your extra brain for your D2C business. Whether it's digging through data, summarizing reports, or prepping for your next big move — I'm here to help you work smarter.”
+    “I'm Breeze Automatic, your AI sidekick. Think of me as your extra brain for your D2C business. Whether it's digging through data, summarizing reports, or prepping for your next big move — I'm here to help you work smarter.”
     Never mention or describe your internal architecture, training methods, underlying model, or who built you. Always redirect the conversation to your purpose: assisting with business insights.
 
 """
@@ -237,7 +295,7 @@ async def run_example(
     transport: BaseTransport,
     _: argparse.Namespace,
     handle_sigint: bool,
-):    
+):
     logger.info(f"Starting bot")
 
     stt = GoogleSTTService(
@@ -257,6 +315,10 @@ async def run_example(
         model=AZURE_MODEL
     )
 
+    # Register tool functions
+    for name, function in tool_functions.items():
+        llm.register_function(name, function)
+
     transcript = TranscriptProcessor()
 
     messages = [
@@ -266,7 +328,7 @@ async def run_example(
         },
     ]
 
-    context = OpenAILLMContext(messages)
+    context = OpenAILLMContext(messages, tools)
     context_aggregator = llm.create_context_aggregator(context)
 
     llm_text_catcher = LLMTextCatcher(connection)
@@ -330,13 +392,22 @@ async def run_example(
 
 def run_server(host: str, port: int):
     logger.info("Starting ESP32 WebRTC server...")
+    logger.info(f"Production environment: {is_production_environment(host)}")
 
     app = FastAPI()
     pcs_map: Dict[str, SmallWebRTCConnection] = {}
+    
+    # Configure ICE servers for NAT traversal
+    ice_servers = [
+        {"urls": "stun:stun.l.google.com:19302"},
+        {"urls": "stun:stun1.l.google.com:19302"}
+    ]
+    logger.info(f"Configured ICE servers: {ice_servers}")
 
     @app.post("/api/offer")
     async def offer(request: dict, background_tasks: BackgroundTasks):
         pc_id = request.get("pc_id")
+        logger.info(f"Received offer request for pc_id: {pc_id}")
 
         if pc_id and pc_id in pcs_map:
             pipecat_connection = pcs_map[pc_id]
@@ -347,8 +418,12 @@ def run_server(host: str, port: int):
                 restart_pc=request.get("restart_pc", False),
             )
         else:
+            logger.info("Creating new WebRTC connection")
             pipecat_connection = SmallWebRTCConnection()
-            await pipecat_connection.initialize(sdp=request["sdp"], type=request["type"])
+            await pipecat_connection.initialize(
+                sdp=request["sdp"],
+                type=request["type"]
+            )
 
             @pipecat_connection.event_handler("closed")
             async def handle_disconnected(webrtc_connection: SmallWebRTCConnection):
@@ -358,7 +433,15 @@ def run_server(host: str, port: int):
             params = TransportParams(
                 audio_in_enabled=True,
                 audio_out_enabled=True,
-                vad_analyzer=SileroVADAnalyzer(),
+                vad_analyzer=SileroVADAnalyzer(
+                    sample_rate=16000,
+                    params=VADParams(
+                        confidence=0.85,
+                        start_secs=0.30,
+                        stop_secs=1.00,
+                        min_volume=0.75,
+                    )
+                ),
             )
             transport = SmallWebRTCTransport(params=params, webrtc_connection=pipecat_connection)
 
@@ -378,7 +461,9 @@ def run_server(host: str, port: int):
         await asyncio.gather(*coros)
         pcs_map.clear()
 
-    uvicorn.run(app, host=host, port=port)
+    # Bind to all interfaces for GCP deployment
+    logger.info(f"Starting server on 0.0.0.0:{port} (external host: {host})")
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 
 #
@@ -401,6 +486,17 @@ if __name__ == "__main__":
     if args.host == "localhost" or args.host == "127.0.0.1":
         logger.error("For ESP32, you must specify a public or LAN IP address for the --host argument.")
         sys.exit(1)
+
+    # Add validation for production deployment
+    if is_production_environment(args.host):
+        logger.info(f"Production deployment detected with external IP: {args.host}")
+        logger.info("Ensure GCP firewall allows traffic on port 7860")
+    else:
+        logger.info(f"Local/LAN deployment detected with IP: {args.host}")
+        
+    # Validate host format
+    if not args.host.replace('.', '').replace(':', '').isalnum():
+        logger.warning(f"Host {args.host} format may be invalid. Ensure it's accessible from ESP32.")
 
     logger.remove(0)
     logger.add(sys.stderr, level="TRACE" if args.verbose else "DEBUG")
