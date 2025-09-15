@@ -73,14 +73,18 @@ def smallwebrtc_sdp_cleanup_ice_candidates_production(text: str, pattern: str) -
     lines = text.splitlines()
     for line in lines:
         if re.search("a=candidate", line):
-            # Keep host candidates AND server reflexive candidates for NAT traversal
-            if (re.search("typ host", line) or
-                re.search("typ srflx", line) or
-                re.search(pattern, line)):
+            # Keep ALL candidates that match the external IP pattern
+            # This includes both host and srflx candidates with external IP
+            if re.search(pattern, line):
                 result.append(line)
-            # Remove relay candidates only (ESP32 can't handle them)
-            elif not re.search("typ relay", line):
+            # Also keep server reflexive candidates (for NAT traversal)
+            elif re.search("typ srflx", line):
                 result.append(line)
+            # Keep host candidates only if they're not private IPs
+            elif re.search("typ host", line):
+                # Only keep host candidates that don't have private IPs
+                if not any(private_ip in line for private_ip in ["192.168.", "10.", "172.16.", "172.17.", "172.18.", "172.19.", "172.20.", "172.21.", "172.22.", "172.23.", "172.24.", "172.25.", "172.26.", "172.27.", "172.28.", "172.29.", "172.30.", "172.31."]):
+                    result.append(line)
         else:
             result.append(line)
     return "\r\n".join(result)
