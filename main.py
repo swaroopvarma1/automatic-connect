@@ -119,13 +119,15 @@ def smallwebrtc_sdp_munging(sdp: str, host: str) -> str:
     sdp = smallwebrtc_sdp_cleanup_fingerprints(sdp)
     logger.debug(f"After fingerprint cleanup: {len(sdp)} characters")
     
-    # Apply different ICE filtering for production vs local
-    if is_production_environment(host):
-        logger.info("Using production ICE candidate filtering")
-        sdp = smallwebrtc_sdp_cleanup_ice_candidates_production(sdp, host)
-    else:
-        logger.info("Using local network ICE candidate filtering")
-        sdp = smallwebrtc_sdp_cleanup_ice_candidates(sdp, host)
+    # Temporarily use local filtering to debug ICE candidates
+    logger.info("Using local network ICE candidate filtering (debug mode)")
+    sdp = smallwebrtc_sdp_cleanup_ice_candidates(sdp, host)
+    
+    # Log what candidates we're working with before filtering
+    original_candidates = [line for line in sdp.split('\n') if 'a=candidate' in line]
+    logger.info(f"Original candidates before filtering: {len(original_candidates)}")
+    for candidate in original_candidates:
+        logger.info(f"Original: {candidate}")
     
     logger.debug(f"After ICE cleanup: {len(sdp)} characters")
     
