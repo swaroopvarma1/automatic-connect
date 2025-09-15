@@ -424,8 +424,9 @@ def run_server(host: str, port: int):
                 restart_pc=request.get("restart_pc", False),
             )
         else:
-            logger.info("Creating new WebRTC connection")
-            pipecat_connection = SmallWebRTCConnection()
+            logger.info("Creating new WebRTC connection with ICE servers")
+            # Create connection with ICE servers for NAT traversal
+            pipecat_connection = SmallWebRTCConnection(ice_servers=ice_servers)
             await pipecat_connection.initialize(
                 sdp=request["sdp"],
                 type=request["type"]
