@@ -305,7 +305,10 @@ async def run_example(
     )
 
     tts = GoogleTTSService(
-        params=GoogleTTSService.InputParams(language=Language.EN_IN),
+        params=GoogleTTSService.InputParams(
+            language=Language.EN_IN,
+            sample_rate=16000,  # Match ESP32 sample rate for better performance
+        ),
         voice_id="en-IN-Chirp3-HD-Despina",
         credentials=GOOGLE_CREDENTIALS
     )
@@ -398,10 +401,9 @@ def run_server(host: str, port: int):
     app = FastAPI()
     pcs_map: Dict[str, SmallWebRTCConnection] = {}
     
-    # Configure ICE servers for NAT traversal (format for SmallWebRTCConnection)
+    # Configure ICE servers for NAT traversal (optimized for faster connection)
     ice_servers = [
-        "stun:stun.l.google.com:19302",
-        "stun:stun1.l.google.com:19302"
+        "stun:stun.l.google.com:19302"  # Use single STUN server for faster connection
     ]
     logger.info(f"Configured ICE servers: {ice_servers}")
 
@@ -438,10 +440,10 @@ def run_server(host: str, port: int):
                 vad_analyzer=SileroVADAnalyzer(
                     sample_rate=16000,
                     params=VADParams(
-                        confidence=0.85,
-                        start_secs=0.30,
-                        stop_secs=1.00,
-                        min_volume=0.75,
+                        confidence=0.75,      # Lower confidence for better detection over internet
+                        start_secs=0.20,      # Faster voice detection
+                        stop_secs=0.80,       # Shorter silence detection
+                        min_volume=0.60,      # Lower volume threshold for internet audio
                     )
                 ),
             )
