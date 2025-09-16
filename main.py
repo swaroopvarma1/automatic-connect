@@ -403,10 +403,10 @@ def run_server(host: str, port: int):
     app = FastAPI()
     pcs_map: Dict[str, SmallWebRTCConnection] = {}
     
-    # Configure ICE servers for NAT traversal
+    # Configure ICE servers for NAT traversal (format for SmallWebRTCConnection)
     ice_servers = [
-        {"urls": "stun:stun.l.google.com:19302"},
-        {"urls": "stun:stun1.l.google.com:19302"}
+        "stun:stun.l.google.com:19302",
+        "stun:stun1.l.google.com:19302"
     ]
     logger.info(f"Configured ICE servers: {ice_servers}")
 
