@@ -115,20 +115,23 @@ def smallwebrtc_sdp_munging(sdp: str, host: str) -> str:
     logger.info(f"Starting SDP munging for host: {host}")
     logger.debug(f"Original SDP length: {len(sdp)} characters")
     
-    # Log the complete original SDP for debugging
-    logger.info("=== ORIGINAL SDP START ===")
-    for i, line in enumerate(sdp.split('\n'), 1):
-        logger.info(f"SDP Line {i:2d}: {line}")
-    logger.info("=== ORIGINAL SDP END ===")
-    
     # Count original ICE candidates
     original_candidates = [line for line in sdp.split('\n') if 'a=candidate' in line]
     logger.info(f"Original ICE candidates found: {len(original_candidates)}")
     for candidate in original_candidates:
         logger.info(f"Original candidate: {candidate}")
     
-    # TEMPORARILY DISABLE ALL SDP MUNGING - return raw SDP
-    logger.warning("SDP MUNGING DISABLED - Returning raw SDP for debugging")
+    # ONLY clean fingerprints (ESP32 limitation) - keep all ICE candidates
+    logger.info("Applying fingerprint cleanup only - keeping all ICE candidates")
+    sdp = smallwebrtc_sdp_cleanup_fingerprints(sdp)
+    logger.debug(f"After fingerprint cleanup: {len(sdp)} characters")
+    
+    # Log final ICE candidates
+    final_candidates = [line for line in sdp.split('\n') if 'a=candidate' in line]
+    logger.info(f"Final ICE candidates: {len(final_candidates)}")
+    for candidate in final_candidates:
+        logger.info(f"Final candidate: {candidate}")
+    
     return sdp
 
 #
