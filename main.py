@@ -115,28 +115,20 @@ def smallwebrtc_sdp_munging(sdp: str, host: str) -> str:
     logger.info(f"Starting SDP munging for host: {host}")
     logger.debug(f"Original SDP length: {len(sdp)} characters")
     
-    # Always clean fingerprints (ESP32 limitation)
-    sdp = smallwebrtc_sdp_cleanup_fingerprints(sdp)
-    logger.debug(f"After fingerprint cleanup: {len(sdp)} characters")
+    # Log the complete original SDP for debugging
+    logger.info("=== ORIGINAL SDP START ===")
+    for i, line in enumerate(sdp.split('\n'), 1):
+        logger.info(f"SDP Line {i:2d}: {line}")
+    logger.info("=== ORIGINAL SDP END ===")
     
-    # Temporarily use local filtering to debug ICE candidates
-    logger.info("Using local network ICE candidate filtering (debug mode)")
-    sdp = smallwebrtc_sdp_cleanup_ice_candidates(sdp, host)
-    
-    # Log what candidates we're working with before filtering
+    # Count original ICE candidates
     original_candidates = [line for line in sdp.split('\n') if 'a=candidate' in line]
-    logger.info(f"Original candidates before filtering: {len(original_candidates)}")
+    logger.info(f"Original ICE candidates found: {len(original_candidates)}")
     for candidate in original_candidates:
-        logger.info(f"Original: {candidate}")
+        logger.info(f"Original candidate: {candidate}")
     
-    logger.debug(f"After ICE cleanup: {len(sdp)} characters")
-    
-    # Log ICE candidates for debugging
-    ice_candidates = [line for line in sdp.split('\n') if 'a=candidate' in line]
-    logger.info(f"Remaining ICE candidates: {len(ice_candidates)}")
-    for candidate in ice_candidates:
-        logger.debug(f"ICE: {candidate}")
-    
+    # TEMPORARILY DISABLE ALL SDP MUNGING - return raw SDP
+    logger.warning("SDP MUNGING DISABLED - Returning raw SDP for debugging")
     return sdp
 
 #
